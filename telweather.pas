@@ -39,6 +39,7 @@ type
     minute:integer;
     index:integer;
     t:integer;
+    td: Double;
     pressure:integer;
     oblaka:integer;
     pogoda:integer;
@@ -46,6 +47,7 @@ type
     wind_dir:integer;
 end;
   Function MdbOpen (hWnd:integer):integer;stdcall;
+  Function MdbOpenR (szFileName: Pchar): THandle; stdcall;  
   Function MdbClose (hDB:integer):integer;stdcall;
   procedure MdbSetCodeForm (h,cf:integer);stdcall;
   procedure MdbSetObsInt (h:integer; ot:YMDHM; duration:integer);stdcall;
@@ -92,6 +94,7 @@ var
 implementation
 
   Function MdbOpen; stdcall; external 'windbr32.dll';
+  Function  MdbOpenR (szFileName: Pchar): THandle; stdcall; external 'WinDbr32';
   Function MdbClose; stdcall; external 'windbr32.dll';
   procedure MdbSetCodeForm;stdcall;external 'windbr32.dll';
   procedure MdbSetObsInt;stdcall; external 'windbr32.dll';
@@ -128,7 +131,7 @@ begin
   SetConsoleTitle('NowWeather (www.meteo.nnov.ru)');
   ShowCursor(False);
 
-  try
+  {try
     reg := TRegistry.Create;
     reg.RootKey := HKEY_LOCAL_MACHINE;
     reg.LazyWrite := false;
@@ -140,7 +143,7 @@ begin
     reg.Free;
   except
     Writeln('You are not to add NowWeather in the autorun . You are not admin');
-  end;
+  end;}
 
   k:= GetModuleFilename(hInstance, @buf, SizeOf(buf));
   k:=LastDelimiter('\',buf);
@@ -152,6 +155,7 @@ begin
   with MyIniFile do
     timeUpdate:=ReadString('meteo','timeUpdate','');
   MyIniFile.Free;
+  writeln('Start successfully');
 
   SetTimer (0, 1,30000,@TimerCallBack);
   while GetMessage(mesg, 0, 0, 0) do begin
@@ -165,8 +169,7 @@ Procedure TimerCallBack();
 var  st:TSYSTEMTIME;
      Hour,Min,Sec,MSec:Word;
      s1,s2:TStrings;
-     dt:TDateTime;
-     masUpdateTime:array of TDateTime;
+     dt, newdt:TDateTime;
      i:integer;
      strTime:string;
 begin
@@ -174,43 +177,28 @@ begin
     dt:=SystemTimeToDateTime(st);
     DecodeTime(dt,Hour,Min,Sec,MSec);
     dt:=encodeTime(Hour,Min,Sec,MSec);
-
-    writeln('Go: '+intTostr(Hour)+':'+intTostr(Min)+':'+intTostr(Sec));
-
-
+    
     s1:=TstringList.Create;
     s1.Add(timeUpdate);
-    writeln('TimeUpdate: '+timeUpdate);
     s2:=TstringList.Create;
     s2.CommaText:=s1[0];
-    setlength(masUpdateTime,s2.Count);
     for i:=0 to s2.Count-1 do
     begin
       strTime:=s2.Strings[i];
       Hour:=strToIntDef(Copy(strTime,1,Pos(':',strTime)-1),0);
       Min:=strToIntDef(Copy(strTime,Pos(':',strTime)+1,Length(strTime)),0);
-      masUpdateTime[i]:=encodeTime(Hour,Min,Sec,MSec);
-      writeln('TimeUpdate'+(intToStr(i))+': '+intTostr(Hour)+':'+intTostr(Min));
-    end;
-    for i:=0 to length(masUpdateTime)-1 do
-    begin
-      if (masUpdateTime[i]=dt) then
+      if encodeTime(Hour,Min, Sec, MSec) = dt then
       begin
-        writeln('Work with meteo.mdb');
+        writeln(intTostr(Hour)+':'+intTostr(Min)+':'+intTostr(Sec)+' Begin update');
         OpenMDB;
-      end;
-      if (masUpdateTime[i]<>dt) and (i=length(masUpdateTime)-1) then
-      begin
-        writeln('Do not work with meteo.mdb');
+        GetSystemTime(st);
+        newdt:=SystemTimeToDateTime(st);
+        DecodeTime(newdt,Hour,Min,Sec,MSec);
+        writeln(intTostr(Hour)+':'+intTostr(Min)+':'+intTostr(Sec)+' End update');
+        break;
       end;
     end;
-    masUpdateTime:=nil;
 
-    GetSystemTime(st);
-    dt:=SystemTimeToDateTime(st);
-    DecodeTime(dt,Hour,Min,Sec,MSec);
-    writeln('End: '+intTostr(Hour)+':'+intTostr(Min)+':'+intTostr(Sec));
-    
     s2.Free;
     s1.Free;
 end;
@@ -246,6 +234,7 @@ begin
       masFrc[j].minute:=0;
       masFrc[j].index:=strToIntdef(s2.Strings[j],0);
       masFrc[j].t:=-10000;
+      masFrc[j].td := -10000;
       masFrc[j].pressure:=-10000;
       masfrc[j].oblaka:=-10000;
       masfrc[j].pogoda:=-10000;
@@ -288,12 +277,19 @@ end;
 
 procedure WriteMdb(var obsDate1:TYMDHM;region:integer);
 var strZapros,strWd,strDate,strTime:string;
-    i,k:integer;
+    i,k, td:integer;
+    MyIniFile:TIniFile;
   const masveter: array [0..7] of string=('Ñ','Ñ-Â','Â','Þ-Â','Þ','Þ-Ç','Ç','Ñ-Ç');
   const masvetegr: array [0..7] of integer=(0,45,90,135,180,225,270,315);
+  var s: TStringList;
 begin
   for i:=0 to length(masFrc)-1 do
   begin
+    if (masfrc[i].t = -10000) then
+    begin
+      Writeln('Station: '+intToStr(masFrc[i].index)+' Data has not written successfully. Data is not correct');
+      continue;
+    end;
     if (masFrc[i].wind_dir<>-10000) then
     begin
       for k:=0 to length(masvetegr)-2 do
@@ -310,15 +306,37 @@ begin
     if Frac(masfrc[i].t/100)<=0.5 then
       masfrc[i].t:=Floor(masfrc[i].t/100)
     else masfrc[i].t:=Ceil(masfrc[i].t/100);
+    if (masFrc[i].index = 27459) then
+    begin
+      s:=TstringList.Create;
+      s.Add('{');
+      s.Add('"temper":'+intToStr(masFrc[i].t));
+      s.Add(',');
+      s.Add('"pressure":'+intToStr(Ceil(masFrc[i].pressure*0.75)));
+      s.Add(',');
+      td := 100-5*(masfrc[i].t-Ceil(masfrc[i].td));
+      s.Add(',');
+      s.Add('"humidity":'+ intToStr(td));
+      s.Add(',');
+      s.add('"wind_speed":'+ intToStr(masFrc[i].windSpeed));
+      s.Add(',');
+      s.Add('"wind_dir":'+intToStr(masFrc[i].wind_dir));
+      s.add('}');
+      MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');      
+      s.SaveToFile(MyIniFile.ReadString('dataFile','folder','')+intToStr(masFrc[i].index)+'.json');
+      MyIniFile.Free;
+      s.Free;
+    end;
     strZapros:='INSERT INTO tekweather (date,time,index,te,pressure,obl,pogoda,wind_speed,wd,region) VALUES ('+''''+strDate+''','+''''+strTime+''''+' ,'+intToStr(masFrc[i].index)+' ,'+intToStr(masFrc[i].t)+', '+intToStr(masFrc[i].pressure)+', '+intToStr(masFrc[i].oblaka)+', '+intToStr(masFrc[i].pogoda)+', '+intToStr(masFrc[i].windSpeed)+', '''+strWd+''', '+IntToStr(region+1)+')';
     Query1.Close;
     Query1.SQL.Clear;
     Query1.SQL.Add(strZapros);
     try
       Query1.ExecSQL;
-      Writeln('Date: '+intTostr(obsDate1.day)+'/'+intTostr(obsDate1.month)+'/'+intTostr(obsDate1.year)+' '+intTostr(obsDate1.hour)+':'+intTostr(obsDate1.minute)+'0(GMT) Station: '+intToStr(masFrc[i].index)+' Data has written successfully');
+      Writeln('Station: '+intToStr(masFrc[i].index)+' Data has written successfully');
     except
-      Writeln('Date: '+intTostr(obsDate1.day)+'/'+intTostr(obsDate1.month)+'/'+intTostr(obsDate1.year)+' '+intTostr(obsDate1.hour)+':'+intTostr(obsDate1.minute)+'0(GMT) Station: '+intToStr(masFrc[i].index)+' Data has not written successfully');
+      Writeln(strZapros);
+      Writeln('Station: '+intToStr(masFrc[i].index)+' Data has not written successfully');
     end;
     Query1.Close;
     Query1.SQL.Clear;
@@ -332,11 +350,18 @@ var PobsDate:YMDHM;
     Handle,nIndex,nCode,j:integer;
     //F:TextFile;
     //str:string;
+    basePath: string;
+    MyIniFile: TIniFile;
 begin
     Result:=false;
-    Handle:=MdbOpen(0);
+    MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');
+    basePath := MyIniFile.ReadString('Meteo', 'mdbfile', '');
+    MyIniFile.Free;
+    Handle:=MdbOpenR(Pchar(basePath));
+
     if(Handle<>0) then
     begin
+      Writeln('Date: '+intTostr(obsDate.day)+'/'+intTostr(obsDate.month)+'/'+intTostr(obsDate.year)+' '+intTostr(obsDate.hour)+':'+intTostr(obsDate.minute)+'(GMT) Sucsess to meteo.cdb');
       MdbSetCodeForm (Handle,16);
       PobsDate:=@obsDate;
       MdbSetObsInt(Handle,PobsDate,0);
@@ -376,6 +401,10 @@ begin
                 begin
                   masfrc[j].wind_dir:=Date.value;
                 end;
+                if (Date.pname=7) and (Date.ltype=1) then
+                begin
+                  masfrc[j].td:=Date.value/100;
+                end;
               end;
             end;
           end;
@@ -388,7 +417,6 @@ begin
   if(Handle<>0) then
   begin
     MdbClose(Handle);
-    Writeln('Date: '+intTostr(obsDate.day)+'/'+intTostr(obsDate.month)+'/'+intTostr(obsDate.year)+' '+intTostr(obsDate.hour)+':'+intTostr(obsDate.minute)+'0 (GMT) Data has selected successfully');
     result:=true;
   end;
 
@@ -419,6 +447,8 @@ var
     obsDate:TYMDHM;
     TZ: TTimeZoneInformation;
     dt:TdateTime;
+    MyIniFile :TIniFile;
+    timezone: string;
 begin
 
   GetSystemTime(st);
@@ -454,9 +484,13 @@ begin
       obsDate.minute:=0;
   end;
   dt:=encodeDateTime(obsDate.year,obsDate.month,obsDate.day,obsDate.hour,obsDate.minute,0,0);
-  dateTimeToSystemTime(dt,st);
-  GetTimeZoneInformation(TZ);
-  SystemTimeToTzSpecificLocalTime(@TZ, ST, ST);
+  MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');
+  timezone := MyIniFile.ReadString('Meteo', 'timezone', '');
+  MyIniFile.Free;
+  dt := IncMinute(dt, strToIntDef(timezone, 3));  
+  dateTimeToSystemTime(dt, st);
+  //GetTimeZoneInformation(TZ);
+  //SystemTimeToTzSpecificLocalTime(@TZ, ST, ST);
   s2.Free;
   s1.Free;
   Result:=obsDate;
