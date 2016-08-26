@@ -117,7 +117,6 @@ implementation
 procedure Main;
 var k:integer; MyIniFile:TIniFile;
     buf: array[0..1024] of char;
-    str:string;
     reg: TRegistry;
 begin
 
@@ -283,6 +282,7 @@ var strZapros,strWd,strDate,strTime:string;
   const masvetegr: array [0..7] of integer=(0,45,90,135,180,225,270,315);
   var s: TStringList;
 begin
+  //Writeln('Log: masFrc length='+intToStr(length(masFrc)));
   for i:=0 to length(masFrc)-1 do
   begin
     if (masfrc[i].t = -10000) then
@@ -315,15 +315,19 @@ begin
       s.Add('"pressure":'+intToStr(Ceil(masFrc[i].pressure*0.75)));
       s.Add(',');
       td := 100-5*(masfrc[i].t-Ceil(masfrc[i].td));
-      s.Add(',');
       s.Add('"humidity":'+ intToStr(td));
       s.Add(',');
       s.add('"wind_speed":'+ intToStr(masFrc[i].windSpeed));
       s.Add(',');
       s.Add('"wind_dir":'+intToStr(masFrc[i].wind_dir));
       s.add('}');
-      MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');      
-      s.SaveToFile(MyIniFile.ReadString('dataFile','folder','')+intToStr(masFrc[i].index)+'.json');
+      MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');
+      try
+        s.SaveToFile(MyIniFile.ReadString('dataFile', 'folder','')+intToStr(masFrc[i].index)+'.json');
+        Writeln('File for meteotable was created');        
+      except
+        Writeln('File for meteotable was not created');
+      end;
       MyIniFile.Free;
       s.Free;
     end;
@@ -352,6 +356,7 @@ var PobsDate:YMDHM;
     //str:string;
     basePath: string;
     MyIniFile: TIniFile;
+    bsuccess: boolean;
 begin
     Result:=false;
     MyIniFile:=TIniFile.Create(strPathFile+'nowweather.ini');
@@ -361,7 +366,7 @@ begin
 
     if(Handle<>0) then
     begin
-      Writeln('Date: '+intTostr(obsDate.day)+'/'+intTostr(obsDate.month)+'/'+intTostr(obsDate.year)+' '+intTostr(obsDate.hour)+':'+intTostr(obsDate.minute)+'(GMT) Sucsess to meteo.cdb');
+      Writeln('Date: '+intTostr(obsDate.day)+'/'+intTostr(obsDate.month)+'/'+intTostr(obsDate.year)+' '+intTostr(obsDate.hour)+':'+intTostr(obsDate.minute)+'(GMT) Success to meteo.cdb');
       MdbSetCodeForm (Handle,16);
       PobsDate:=@obsDate;
       MdbSetObsInt(Handle,PobsDate,0);
@@ -375,8 +380,10 @@ begin
              nCode:=MdbGetCodeForm (Handle);
              MdbGetObsTime(Handle,PobsDate);
              PDate:=@Date;
+             bsuccess := false;
              while(MdbGetData(Handle,PDate) = TRUE) do
              begin
+                bsuccess := true;
                 if (Date.pname=2) and (Date.ltype=1) then
                 begin
                   masfrc[j].t:=Date.value;
@@ -406,7 +413,9 @@ begin
                   masfrc[j].td:=Date.value/100;
                 end;
               end;
+              //if bsuccess then Writeln('Data for station '+ intToStr(masfrc[j].index)+' was selected successfully');
             end;
+            bsuccess := false;
           end;
       end;
    end
